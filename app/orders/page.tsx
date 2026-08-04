@@ -12,6 +12,71 @@ import {
 } from '@/components/OrderAgainScreen';
 import { EvaluatorPanel } from '@/components/EvaluatorPanel';
 import { FailureType } from '@/components/ProductDetailSheet';
+import { LapsedCandidateOrder } from '@/components/HomeSecondTryCard';
+
+const CANDIDATE_SEED_ORDERS: LapsedCandidateOrder[] = [
+  {
+    orderId: 'o4',
+    categoryKey: 'electronics',
+    categoryName: 'Electronics',
+    icon: '🔌',
+    date: 'Thu · first order',
+    complaintText: "Kept adding it to cart and removing it, too much money to risk if something's wrong.",
+    productId: 'ele1',
+    productName: 'Compact Air Fryer, 4.1L',
+    productIcon: '🍳',
+    productColor: '#E9E9F7',
+    price: 5499,
+    daysLapsed: 15,
+    recencyDaysAgo: 4,
+  },
+  {
+    orderId: 'o3',
+    categoryKey: 'baby',
+    categoryName: 'Baby Products',
+    icon: '🍼',
+    date: 'Sun · first order',
+    complaintText: 'Raised a ticket about a torn pack, support closed it without actually fixing anything.',
+    productId: 'bab1',
+    productName: 'Baby Diapers, Size M, 42 pcs',
+    productIcon: '🍼',
+    productColor: '#FBE2DE',
+    price: 549,
+    isFree: true,
+    daysLapsed: 8,
+    recencyDaysAgo: 1,
+  },
+  {
+    orderId: 'o2',
+    categoryKey: 'personal',
+    categoryName: 'Personal Care',
+    icon: '🧴',
+    date: 'Mon · first order',
+    complaintText: "Wasn't sure about this one, no reviews on the app to check before buying.",
+    productId: 'per1',
+    productName: 'Herbal Face Wash, 100ml',
+    productIcon: '🧼',
+    productColor: '#EAF6E2',
+    price: 179,
+    daysLapsed: 12,
+    recencyDaysAgo: 3,
+  },
+  {
+    orderId: 'o1',
+    categoryKey: 'pet',
+    categoryName: 'Pet Supplies',
+    icon: '🐾',
+    date: 'Tue · first order',
+    complaintText: 'This arrived already expired, had to throw the whole bag away.',
+    productId: 'pet1',
+    productName: 'Everyday Adult Dog Food, 3kg',
+    productIcon: '🐕',
+    productColor: '#FFF9E6',
+    price: 649,
+    daysLapsed: 5,
+    recencyDaysAgo: 2,
+  },
+];
 
 export default function OrdersPage() {
   const [activeHeaderTab, setActiveHeaderTab] = useState('All');
@@ -32,8 +97,9 @@ export default function OrdersPage() {
       };
     })
   );
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>('o1');
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>('o4');
   const [recoveredCount, setRecoveredCount] = useState(0);
+  const [resolvedOrderIds, setResolvedOrderIds] = useState<string[]>([]);
 
   // Evaluator Panel Live AI State
   const [customComplaintText, setCustomComplaintText] = useState('');
@@ -134,6 +200,7 @@ export default function OrdersPage() {
     setOrders((prev) =>
       prev.map((o) => (o.orderId === orderId ? { ...o, status: 'resolved' } : o))
     );
+    setResolvedOrderIds((prev) => [...prev, orderId]);
     setRecoveredCount((prev) => prev + 1);
     showToast(`✓ Second order placed — welcome back to ${order.categoryName}!`);
   };
@@ -142,6 +209,7 @@ export default function OrdersPage() {
     setOrders((prev) =>
       prev.map((o) => (o.orderId === orderId ? { ...o, status: 'closed' } : o))
     );
+    setResolvedOrderIds((prev) => [...prev, orderId]);
     showToast('Order summary closed');
   };
 
@@ -235,9 +303,14 @@ export default function OrdersPage() {
           onCustomComplaintChange={setCustomComplaintText}
           onRunCustomDiagnosis={handleRunCustomDiagnosis}
           isDiagnosing={isDiagnosing}
-          orders={orders}
-          selectedOrderId={selectedOrderId}
-          onSelectOrder={setSelectedOrderId}
+          candidateOrders={CANDIDATE_SEED_ORDERS}
+          activeOrder={CANDIDATE_SEED_ORDERS[0]}
+          resolvedOrderIds={resolvedOrderIds}
+          onResetStorage={() => {
+            setResolvedOrderIds([]);
+            setRecoveredCount(0);
+            showToast('Reset state');
+          }}
         />
 
       </div>

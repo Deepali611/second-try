@@ -6,16 +6,15 @@ import { PromoBanners } from '@/components/PromoBanners';
 import { ProductCard, Product } from '@/components/ProductCard';
 import { CategoryGrid } from '@/components/CategoryGrid';
 import { BottomNav } from '@/components/BottomNav';
-import {
-  OrderAgainScreen,
-  ComputedOrderScenario,
-  SEED_COMPLAINTS,
-  classifyComplaintAlgorithm,
-  computeCardFromDiagnosis,
-} from '@/components/OrderAgainScreen';
+import { OrderAgainScreen } from '@/components/OrderAgainScreen';
 import { ProductDetailSheet, FailureType } from '@/components/ProductDetailSheet';
 import { CategoryListingGrid } from '@/components/CategoryListingGrid';
 import { EvaluatorPanel } from '@/components/EvaluatorPanel';
+import {
+  HomeSecondTryCard,
+  LapsedCandidateOrder,
+  calculateLapsedCategoryScore,
+} from '@/components/HomeSecondTryCard';
 
 const PREVIOUSLY_BOUGHT_PRODUCTS: Product[] = [
   {
@@ -120,6 +119,73 @@ const WISHLIST_PRODUCTS: Product[] = [
   },
 ];
 
+const CANDIDATE_SEED_ORDERS: LapsedCandidateOrder[] = [
+  {
+    orderId: 'o4',
+    categoryKey: 'electronics',
+    categoryName: 'Electronics',
+    icon: '🔌',
+    date: 'Thu · first order',
+    complaintText: "Kept adding it to cart and removing it, too much money to risk if something's wrong.",
+    productId: 'ele1',
+    productName: 'Compact Air Fryer, 4.1L',
+    productIcon: '🍳',
+    productColor: '#E9E9F7',
+    price: 5499,
+    daysLapsed: 15,
+    recencyDaysAgo: 4,
+  },
+  {
+    orderId: 'o3',
+    categoryKey: 'baby',
+    categoryName: 'Baby Products',
+    icon: '🍼',
+    date: 'Sun · first order',
+    complaintText: 'Raised a ticket about a torn pack, support closed it without actually fixing anything.',
+    productId: 'bab1',
+    productName: 'Baby Diapers, Size M, 42 pcs',
+    productIcon: '🍼',
+    productColor: '#FBE2DE',
+    price: 549,
+    isFree: true,
+    daysLapsed: 8,
+    recencyDaysAgo: 1,
+  },
+  {
+    orderId: 'o2',
+    categoryKey: 'personal',
+    categoryName: 'Personal Care',
+    icon: '🧴',
+    date: 'Mon · first order',
+    complaintText: "Wasn't sure about this one, no reviews on the app to check before buying.",
+    productId: 'per1',
+    productName: 'Herbal Face Wash, 100ml',
+    productIcon: '🧼',
+    productColor: '#EAF6E2',
+    price: 179,
+    daysLapsed: 12,
+    recencyDaysAgo: 3,
+  },
+  {
+    orderId: 'o1',
+    categoryKey: 'pet',
+    categoryName: 'Pet Supplies',
+    icon: '🐾',
+    date: 'Tue · first order',
+    complaintText: 'This arrived already expired, had to throw the whole bag away.',
+    productId: 'pet1',
+    productName: 'Everyday Adult Dog Food, 3kg',
+    productIcon: '🐕',
+    productColor: '#FFF9E6',
+    price: 649,
+    daysLapsed: 5,
+    recencyDaysAgo: 2,
+  },
+];
+
+const LOCAL_STORAGE_KEY = 'second_try_resolved_orders';
+const RECOVERED_COUNT_KEY = 'second_try_recovered_count';
+
 export default function Home() {
   const [activeHeaderTab, setActiveHeaderTab] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -135,113 +201,153 @@ export default function Home() {
   const [isPdpOpen, setIsPdpOpen] = useState(false);
   const [diagnosedFailure, setDiagnosedFailure] = useState<FailureType>(null);
 
-  // Orders State (Initial Loading Skeletons for computed data)
-  const [orders, setOrders] = useState<ComputedOrderScenario[]>(() =>
-    SEED_COMPLAINTS.map((seed) => {
-      const initialComputed = computeCardFromDiagnosis(seed.categoryName, 'quality_expiry');
-      return {
-        ...seed,
-        ...initialComputed,
-        isDiagnosing: true,
-      };
-    })
-  );
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>('o1');
-  const [recoveredCount, setRecoveredCount] = useState(0);
+  // Candidate Orders State & localStorage persistence
+  const [candidateOrders, setCandidateOrders] = useState<LapsedCandidateOrder[]>(CANDIDATE_SEED_ORDERS);
+  const [resolvedOrderIds, setResolvedOrderIds] = useState<string[]>([]);
+  const [recoveredCount, setRecoveredCount] = useState<number>(0);
+
+  // Active dynamically chosen single order on Home
+  const [activeHomeOrder, setActiveHomeOrder] = useState<LapsedCandidateOrder | null>(null);
 
   // Evaluator Panel Live AI State
   const [customComplaintText, setCustomComplaintText] = useState('');
   const [isDiagnosing, setIsDiagnosing] = useState(false);
 
-  // AUTOMATIC DATA-DERIVED DIAGNOSIS ON MOUNT
+  // 1. Initialize from localStorage on mount
   useEffect(() => {
+    try {
+      const storedResolved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (storedResolved) {
+        setResolvedOrderIds(JSON.parse(storedResolved));
+      }
+      const storedCount = localStorage.getItem(RECOVERED_COUNT_KEY);
+      if (storedCount) {
+        setRecoveredCount(parseInt(storedCount, 10));
+      }
+    } catch (err) {
+      console.warn('localStorage read error:', err);
+    }
+  }, []);
+
+  // 2. Compute highest-scoring active candidate & call live /api/diagnose
+  useEffect(() => {
+    // Filter un-resolved candidates
+    const activeCandidates = candidateOrders.filter((o) => !resolvedOrderIds.includes(o.orderId));
+
+    if (activeCandidates.length === 0) {
+      setActiveHomeOrder(null);
+      return;
+    }
+
+    // Sort by scoring function descending
+    const sorted = [...activeCandidates].sort(
+      (a, b) => calculateLapsedCategoryScore(b) - calculateLapsedCategoryScore(a)
+    );
+
+    const highestScoring = sorted[0];
+
+    // If highest scoring is already diagnosed, set active
+    if (highestScoring.generatedTitle) {
+      setActiveHomeOrder(highestScoring);
+      return;
+    }
+
+    // Otherwise, set loading state and call /api/diagnose live
     let isMounted = true;
+    setActiveHomeOrder({ ...highestScoring, isDiagnosing: true });
 
-    async function diagnoseAllOrders() {
-      for (const seed of SEED_COMPLAINTS) {
-        try {
-          const res = await fetch('/api/diagnose', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ complaintText: seed.complaintText }),
-          });
+    async function diagnoseActiveOrder() {
+      try {
+        const res = await fetch('/api/diagnose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            complaintText: highestScoring.complaintText,
+            categoryName: highestScoring.categoryName,
+            productName: highestScoring.productName,
+          }),
+        });
 
-          if (res.ok) {
-            const data = await res.json();
-            if (isMounted && data && data.category) {
-              const cardCopy = computeCardFromDiagnosis(seed.categoryName, data.category);
-              setOrders((prev) =>
-                prev.map((o) =>
-                  o.orderId === seed.orderId
-                    ? {
-                        ...o,
-                        ...cardCopy,
-                        failureCategory: data.category,
-                        groundingQuote: data.grounding_quote,
-                        confidence: data.confidence,
-                        reasoning: data.reasoning,
-                        modelUsed: data.modelUsed || 'Groq AI Model',
-                        isDiagnosing: false,
-                      }
-                    : o
-                )
-              );
-            }
-          } else {
-            // API returned non-200 or missing key -> Run fallback dynamic classifier algorithm
-            const fallback = classifyComplaintAlgorithm(seed.complaintText);
-            const cardCopy = computeCardFromDiagnosis(seed.categoryName, fallback.category);
-            if (isMounted) {
-              setOrders((prev) =>
-                prev.map((o) =>
-                  o.orderId === seed.orderId
-                    ? {
-                        ...o,
-                        ...cardCopy,
-                        failureCategory: fallback.category,
-                        groundingQuote: fallback.grounding_quote,
-                        confidence: fallback.confidence,
-                        reasoning: fallback.reasoning,
-                        modelUsed: 'Local Classifier Algorithm',
-                        isDiagnosing: false,
-                      }
-                    : o
-                )
-              );
-            }
-          }
-        } catch (err) {
-          // Network failure -> Run fallback dynamic classifier algorithm
-          const fallback = classifyComplaintAlgorithm(seed.complaintText);
-          const cardCopy = computeCardFromDiagnosis(seed.categoryName, fallback.category);
-          if (isMounted) {
-            setOrders((prev) =>
-              prev.map((o) =>
-                o.orderId === seed.orderId
-                  ? {
-                      ...o,
-                      ...cardCopy,
-                      failureCategory: fallback.category,
-                      groundingQuote: fallback.grounding_quote,
-                      confidence: fallback.confidence,
-                      reasoning: fallback.reasoning,
-                      modelUsed: 'Local Classifier Algorithm',
-                      isDiagnosing: false,
-                    }
-                  : o
-              )
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data) {
+            const updated: LapsedCandidateOrder = {
+              ...highestScoring,
+              failureCategory: data.category,
+              generatedTitle: data.generatedTitle,
+              generatedBody: data.generatedBody,
+              reorderNote: data.reorderNote,
+              guaranteeTag: data.guaranteeTag,
+              buttonText: data.buttonText,
+              modelUsed: data.modelUsed,
+              isDiagnosing: false,
+            };
+
+            setCandidateOrders((prev) =>
+              prev.map((o) => (o.orderId === highestScoring.orderId ? updated : o))
             );
+            setActiveHomeOrder(updated);
           }
         }
+      } catch (err) {
+        console.warn('Live /api/diagnose failed:', err);
       }
     }
 
-    diagnoseAllOrders();
+    diagnoseActiveOrder();
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [candidateOrders, resolvedOrderIds]);
+
+  const handleConvertHomeOrder = (orderId: string) => {
+    const target = candidateOrders.find((o) => o.orderId === orderId);
+    if (!target) return;
+
+    const nextResolved = [...resolvedOrderIds, orderId];
+    setResolvedOrderIds(nextResolved);
+
+    const nextCount = recoveredCount + 1;
+    setRecoveredCount(nextCount);
+
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextResolved));
+      localStorage.setItem(RECOVERED_COUNT_KEY, nextCount.toString());
+    } catch (err) {
+      console.warn('localStorage write error:', err);
+    }
+
+    showToast(`✓ Second order placed — welcome back to ${target.categoryName}!`);
+  };
+
+  const handleRetireHomeOrder = (orderId: string) => {
+    const target = candidateOrders.find((o) => o.orderId === orderId);
+    if (!target) return;
+
+    const nextResolved = [...resolvedOrderIds, orderId];
+    setResolvedOrderIds(nextResolved);
+
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextResolved));
+    } catch (err) {
+      console.warn('localStorage write error:', err);
+    }
+
+    showToast('Card retired for this category');
+  };
+
+  const handleResetStorage = () => {
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+      localStorage.removeItem(RECOVERED_COUNT_KEY);
+      setResolvedOrderIds([]);
+      setRecoveredCount(0);
+      showToast('localStorage reset — scoring engine refreshed');
+    } catch (err) {
+      console.warn('localStorage clear error:', err);
+    }
+  };
 
   const handleAdd = (id: string) => {
     setCart((prev) => {
@@ -278,24 +384,6 @@ export default function Home() {
     }
   };
 
-  const handleConvertOrder = (orderId: string) => {
-    const order = orders.find((o) => o.orderId === orderId);
-    if (!order || order.status !== 'issue') return;
-
-    setOrders((prev) =>
-      prev.map((o) => (o.orderId === orderId ? { ...o, status: 'resolved' } : o))
-    );
-    setRecoveredCount((prev) => prev + 1);
-    showToast(`✓ Second order placed — welcome back to ${order.categoryName}!`);
-  };
-
-  const handleRetireOrder = (orderId: string) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.orderId === orderId ? { ...o, status: 'closed' } : o))
-    );
-    showToast('Order summary closed');
-  };
-
   const handleRunCustomDiagnosis = async () => {
     if (!customComplaintText.trim()) return;
 
@@ -309,27 +397,14 @@ export default function Home() {
 
       if (res.ok) {
         const data = await res.json();
-        const mappedType: FailureType = data.category
-          ? (data.category.replace('_expiry', '').replace('_unresolved', '').replace('_hesitation', '') as FailureType)
-          : 'quality';
-
-        setDiagnosedFailure(mappedType);
         showToast(`Diagnosed as ${data.category} via Live Groq AI Model ✓`);
         if (!selectedProduct) setSelectedProduct(PREVIOUSLY_BOUGHT_PRODUCTS[0]);
         setIsPdpOpen(true);
       } else {
-        const fallback = classifyComplaintAlgorithm(customComplaintText.trim());
-        const mappedType: FailureType = fallback.category
-          ? (fallback.category.replace('_expiry', '').replace('_unresolved', '').replace('_hesitation', '') as FailureType)
-          : 'quality';
-        setDiagnosedFailure(mappedType);
-        showToast('Diagnosed via local dynamic classifier');
-        if (!selectedProduct) setSelectedProduct(PREVIOUSLY_BOUGHT_PRODUCTS[0]);
-        setIsPdpOpen(true);
+        showToast('Using offline scenario fallback');
       }
     } catch (err) {
-      console.warn('Custom diagnosis call failed:', err);
-      showToast('Diagnosed via local dynamic classifier');
+      showToast('Using offline scenario fallback');
     } finally {
       setIsDiagnosing(false);
     }
@@ -377,11 +452,32 @@ export default function Home() {
           {activeNavTab === 'order-again' ? (
             <OrderAgainScreen
               onShowToast={showToast}
-              orders={orders}
-              selectedOrderId={selectedOrderId}
-              onSelectOrder={setSelectedOrderId}
-              onConvertOrder={handleConvertOrder}
-              onRetireOrder={handleRetireOrder}
+              orders={candidateOrders.map((c) => ({
+                orderId: c.orderId,
+                categoryKey: c.categoryKey,
+                categoryName: c.categoryName,
+                icon: c.icon,
+                date: c.date,
+                complaintText: c.complaintText,
+                failureType: (c.failureCategory?.replace('_expiry', '').replace('_unresolved', '').replace('_hesitation', '') as FailureType) || 'quality',
+                kicker: `ABOUT YOUR ${c.categoryName.toUpperCase()} ORDER`,
+                title: c.generatedTitle || `That ${c.productName} shouldn't have arrived like that.`,
+                body: c.generatedBody || `We've flagged this batch for ${c.categoryName.toLowerCase()}.`,
+                productId: c.productId,
+                productName: c.productName,
+                productIcon: c.productIcon,
+                productColor: c.productColor,
+                price: c.price,
+                isFree: c.isFree,
+                reorderNote: c.reorderNote || 'Verified batch',
+                guaranteeTag: c.guaranteeTag || 'Guarantee applied',
+                buttonText: c.buttonText || `Try ${c.categoryName} again`,
+                status: resolvedOrderIds.includes(c.orderId) ? 'resolved' : 'issue',
+              }))}
+              selectedOrderId={activeHomeOrder?.orderId || 'o4'}
+              onSelectOrder={() => {}}
+              onConvertOrder={handleConvertHomeOrder}
+              onRetireOrder={handleRetireHomeOrder}
             />
           ) : selectedCategoryListing ? (
             /* Category Product-Listing Grid View */
@@ -401,6 +497,17 @@ export default function Home() {
             <main className="pb-8">
               {/* Hero Promotional Banners */}
               <PromoBanners />
+
+              {/* SINGLE DYNAMIC SECOND TRY CARD SURFACED ON HOME (COMPUTED VIA SCORING FUNCTION) */}
+              {activeHomeOrder && (
+                <HomeSecondTryCard
+                  order={activeHomeOrder}
+                  score={calculateLapsedCategoryScore(activeHomeOrder)}
+                  onConvert={handleConvertHomeOrder}
+                  onRetire={handleRetireHomeOrder}
+                  recoveredCount={recoveredCount}
+                />
+              )}
 
               {/* Section: Previously Bought Products Horizontal Carousel */}
               <div className="my-5 px-4">
@@ -506,14 +613,15 @@ export default function Home() {
             setIsPdpOpen(true);
           }}
           recoveredCount={recoveredCount}
-          totalOrdersCount={orders.length}
+          totalOrdersCount={candidateOrders.length}
           customComplaintText={customComplaintText}
           onCustomComplaintChange={setCustomComplaintText}
           onRunCustomDiagnosis={handleRunCustomDiagnosis}
           isDiagnosing={isDiagnosing}
-          orders={orders}
-          selectedOrderId={selectedOrderId}
-          onSelectOrder={setSelectedOrderId}
+          candidateOrders={candidateOrders}
+          activeOrder={activeHomeOrder}
+          resolvedOrderIds={resolvedOrderIds}
+          onResetStorage={handleResetStorage}
         />
 
       </div>
