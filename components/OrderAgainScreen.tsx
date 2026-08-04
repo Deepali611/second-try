@@ -1,15 +1,25 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { FailureType } from './ProductDetailSheet';
 
-export interface OrderScenario {
+export interface ComputedOrderScenario {
   orderId: string;
   categoryKey: string;
   categoryName: string;
   icon: string;
   date: string;
-  failureType: 'quality' | 'proof' | 'support' | 'highvalue';
-  signalQuote: string;
+  complaintText: string; // Ground truth input sentence
+  
+  // Computed output fields (derived from /api/diagnose or dynamic classifier algorithm)
+  failureCategory?: string; // raw category returned e.g. quality_expiry, no_proof, support_unresolved, high_value_hesitation
+  failureType: FailureType;
+  groundingQuote?: string;
+  confidence?: string;
+  reasoning?: string;
+  modelUsed?: string;
+  
+  // Dynamically generated customer-facing card copy
   kicker: string;
   title: string;
   body: string;
@@ -21,31 +31,26 @@ export interface OrderScenario {
   isFree?: boolean;
   reorderNote: string;
   guaranteeTag: string;
-  status: 'issue' | 'resolved' | 'closed';
   buttonText: string;
+  
+  status: 'issue' | 'resolved' | 'closed';
+  isDiagnosing?: boolean;
 }
 
-const SAMPLE_ORDERS_INITIAL: OrderScenario[] = [
+export const SEED_COMPLAINTS: Omit<ComputedOrderScenario, 'kicker' | 'title' | 'body' | 'reorderNote' | 'guaranteeTag' | 'buttonText' | 'failureType'>[] = [
   {
     orderId: 'o1',
     categoryKey: 'pet',
     categoryName: 'Pet Supplies',
     icon: '🐾',
     date: 'Tue · first order',
-    failureType: 'quality',
-    signalQuote: 'This arrived already expired, had to throw the whole bag away.',
-    kicker: 'ABOUT YOUR PET SUPPLIES ORDER',
-    title: "That bag shouldn't have reached you like that.",
-    body: "We've flagged this batch and moved your area to freshness-verified sourcing for pet supplies.",
+    complaintText: 'This arrived already expired, had to throw the whole bag away.',
     productId: 'pet1',
     productName: 'Everyday Adult Dog Food, 3kg',
     productIcon: '🐕',
     productColor: '#FFF9E6',
     price: 649,
-    reorderNote: 'Verified-fresh batch · packed today',
-    guaranteeTag: 'Freshness-verified · replace-first if this happens again',
     status: 'issue',
-    buttonText: 'Try Pet Supplies again',
   },
   {
     orderId: 'o2',
@@ -53,20 +58,13 @@ const SAMPLE_ORDERS_INITIAL: OrderScenario[] = [
     categoryName: 'Personal Care',
     icon: '🧴',
     date: 'Mon · first order',
-    failureType: 'proof',
-    signalQuote: "Wasn't sure about this one, no reviews on the app to check before buying.",
-    kicker: 'ABOUT YOUR PERSONAL CARE ORDER',
-    title: "You weren't wrong to want proof first.",
-    body: '1,240 verified buyers near you rated this exact product 4.4★ in the last 30 days.',
+    complaintText: "Wasn't sure about this one, no reviews on the app to check before buying.",
     productId: 'per1',
     productName: 'Herbal Face Wash, 100ml',
     productIcon: '🧼',
     productColor: '#EAF6E2',
     price: 179,
-    reorderNote: '1,240 verified buyers · 4.4★ near you',
-    guaranteeTag: 'Verified-buyer proof now shown on every listing',
     status: 'issue',
-    buttonText: 'Try Personal Care again',
   },
   {
     orderId: 'o3',
@@ -74,21 +72,14 @@ const SAMPLE_ORDERS_INITIAL: OrderScenario[] = [
     categoryName: 'Baby Products',
     icon: '🍼',
     date: 'Sun · first order',
-    failureType: 'support',
-    signalQuote: 'Raised a ticket about a torn pack, support closed it without actually fixing anything.',
-    kicker: 'ABOUT YOUR BABY PRODUCTS TICKET',
-    title: "That ticket shouldn't have closed like that.",
-    body: "We reopened it. Aditi from resolutions is your direct contact if it isn't right this time.",
+    complaintText: 'Raised a ticket about a torn pack, support closed it without actually fixing anything.',
     productId: 'bab1',
     productName: 'Baby Diapers, Size M, 42 pcs',
     productIcon: '🍼',
     productColor: '#FBE2DE',
     price: 0,
     isFree: true,
-    reorderNote: 'Free replacement · ticket #48213 reopened',
-    guaranteeTag: 'Named contact assigned · replacement free',
     status: 'issue',
-    buttonText: 'Try Baby Products again',
   },
   {
     orderId: 'o4',
@@ -96,31 +87,126 @@ const SAMPLE_ORDERS_INITIAL: OrderScenario[] = [
     categoryName: 'Electronics',
     icon: '🔌',
     date: 'Thu · first order',
-    failureType: 'highvalue',
-    signalQuote: 'Kept adding it to cart and removing it, too much money to risk if something\'s wrong.',
-    kicker: 'ABOUT YOUR ELECTRONICS ORDER',
-    title: "A big-ticket item shouldn't be a gamble.",
-    body: 'Every electronics order now carries a plain 10-day money-back guarantee, shown before you pay.',
+    complaintText: "Kept adding it to cart and removing it, too much money to risk if something's wrong.",
     productId: 'ele1',
     productName: 'Compact Air Fryer, 4.1L',
     productIcon: '🍳',
     productColor: '#E9E9F7',
     price: 5499,
-    reorderNote: '10-day money-back guarantee applied',
-    guaranteeTag: '10-day money-back · applied automatically',
     status: 'issue',
-    buttonText: 'Try Electronics again',
   },
 ];
 
+// Helper algorithm to classify complaintText if offline / no API key configured
+export function classifyComplaintAlgorithm(text: string): {
+  category: string;
+  confidence: string;
+  grounding_quote: string;
+  reasoning: string;
+} {
+  const lower = text.toLowerCase();
+  if (lower.includes('expired') || lower.includes('spoil') || lower.includes('damaged') || lower.includes('throw')) {
+    return {
+      category: 'quality_expiry',
+      confidence: 'high',
+      grounding_quote: text.includes('expired') ? 'arrived already expired' : text,
+      reasoning: 'Classified under physical product quality and expiration issues.',
+    };
+  }
+  if (lower.includes('review') || lower.includes('sure') || lower.includes('check') || lower.includes('proof')) {
+    return {
+      category: 'no_proof',
+      confidence: 'medium-high',
+      grounding_quote: text.includes('no reviews') ? 'no reviews on the app to check' : text,
+      reasoning: 'Classified under lack of customer reviews or social proof.',
+    };
+  }
+  if (lower.includes('ticket') || lower.includes('support') || lower.includes('closed') || lower.includes('help')) {
+    return {
+      category: 'support_unresolved',
+      confidence: 'high',
+      grounding_quote: text.includes('support closed') ? 'support closed it without actually fixing anything' : text,
+      reasoning: 'Classified under support process failures and prematurely closed tickets.',
+    };
+  }
+  return {
+    category: 'high_value_hesitation',
+    confidence: 'medium',
+    grounding_quote: text.includes('too much money') ? 'too much money to risk' : text,
+    reasoning: 'Classified under high-value purchase hesitation and financial risk.',
+  };
+}
+
+// Compute dynamic customer card copy from taxonomy output
+export function computeCardFromDiagnosis(
+  categoryName: string,
+  diagCategory: string
+): {
+  failureType: FailureType;
+  kicker: string;
+  title: string;
+  body: string;
+  reorderNote: string;
+  guaranteeTag: string;
+  buttonText: string;
+} {
+  const cat = diagCategory.toLowerCase();
+
+  if (cat.includes('quality') || cat.includes('expiry')) {
+    return {
+      failureType: 'quality',
+      kicker: `ABOUT YOUR ${categoryName.toUpperCase()} ORDER`,
+      title: "That item shouldn't have arrived like that.",
+      body: `We've flagged this batch and moved your area to freshness-verified sourcing for ${categoryName.toLowerCase()}.`,
+      reorderNote: 'Verified-fresh batch · packed today',
+      guaranteeTag: 'Freshness-verified · replace-first if this happens again',
+      buttonText: `Try ${categoryName} again`,
+    };
+  }
+
+  if (cat.includes('proof')) {
+    return {
+      failureType: 'proof',
+      kicker: `ABOUT YOUR ${categoryName.toUpperCase()} ORDER`,
+      title: "You weren't wrong to want proof first.",
+      body: '1,240 verified buyers near you rated this exact product 4.4★ in the last 30 days.',
+      reorderNote: '1,240 verified buyers · 4.4★ near you',
+      guaranteeTag: 'Verified-buyer proof now shown on every listing',
+      buttonText: `Try ${categoryName} again`,
+    };
+  }
+
+  if (cat.includes('support') || cat.includes('ticket')) {
+    return {
+      failureType: 'support',
+      kicker: `ABOUT YOUR ${categoryName.toUpperCase()} TICKET`,
+      title: "That ticket shouldn't have closed like that.",
+      body: "We reopened it. Aditi from resolutions is your direct contact if it isn't right this time.",
+      reorderNote: 'Free replacement · ticket reopened',
+      guaranteeTag: 'Named contact assigned · replacement free',
+      buttonText: `Try ${categoryName} again`,
+    };
+  }
+
+  return {
+    failureType: 'highvalue',
+    kicker: `ABOUT YOUR ${categoryName.toUpperCase()} ORDER`,
+    title: "A big-ticket item shouldn't be a gamble.",
+    body: `Every ${categoryName.toLowerCase()} order now carries a plain 10-day money-back guarantee, shown before you pay.`,
+    reorderNote: '10-day money-back guarantee applied',
+    guaranteeTag: '10-day money-back · applied automatically',
+    buttonText: `Try ${categoryName} again`,
+  };
+}
+
 interface OrderAgainScreenProps {
   onShowToast: (msg: string) => void;
-  orders: OrderScenario[];
+  orders: ComputedOrderScenario[];
   selectedOrderId: string | null;
   onSelectOrder: (orderId: string) => void;
   onConvertOrder: (orderId: string) => void;
   onRetireOrder: (orderId: string) => void;
-  isDiagnosing: boolean;
+  onUpdateOrderDiagnosis?: (orderId: string, result: any) => void;
 }
 
 export const OrderAgainScreen: React.FC<OrderAgainScreenProps> = ({
@@ -130,7 +216,6 @@ export const OrderAgainScreen: React.FC<OrderAgainScreenProps> = ({
   onSelectOrder,
   onConvertOrder,
   onRetireOrder,
-  isDiagnosing,
 }) => {
   const selectedOrder = orders.find((o) => o.orderId === selectedOrderId);
 
@@ -181,7 +266,12 @@ export const OrderAgainScreen: React.FC<OrderAgainScreenProps> = ({
                 </div>
 
                 <div>
-                  {o.status === 'issue' ? (
+                  {o.isDiagnosing ? (
+                    <span className="bg-blue-50 text-blue-700 text-[10px] font-bold px-2.5 py-1 rounded-full border border-blue-200 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-ping" />
+                      Diagnosing...
+                    </span>
+                  ) : o.status === 'issue' ? (
                     <span className="bg-amber-100 text-amber-900 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-amber-300">
                       Needs attention
                     </span>
@@ -219,7 +309,21 @@ export const OrderAgainScreen: React.FC<OrderAgainScreenProps> = ({
             </button>
           </div>
 
-          {selectedOrder.status === 'resolved' ? (
+          {selectedOrder.isDiagnosing ? (
+            <div className="py-8 text-center space-y-3 bg-gray-50 rounded-2xl border border-gray-200">
+              <div className="flex items-center justify-center gap-1.5 text-xs font-mono text-gray-600">
+                <span>Computing diagnosis via /api/diagnose</span>
+                <span className="inline-flex gap-1">
+                  <span className="w-1.5 h-1.5 bg-[#54B226] rounded-full animate-ping" />
+                  <span className="w-1.5 h-1.5 bg-[#54B226] rounded-full animate-ping delay-150" />
+                  <span className="w-1.5 h-1.5 bg-[#54B226] rounded-full animate-ping delay-300" />
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-400 font-mono">
+                Classifying complaint: "{selectedOrder.complaintText}"
+              </p>
+            </div>
+          ) : selectedOrder.status === 'resolved' ? (
             <div className="bg-[#EAF6E2] border border-[#54B226]/30 rounded-xl p-4 text-center space-y-2 animate-fade-in">
               <span className="text-3xl">🎉</span>
               <h4 className="text-xs font-extrabold text-[#3E8A1C]">
@@ -245,14 +349,8 @@ export const OrderAgainScreen: React.FC<OrderAgainScreenProps> = ({
                 This order summary has been closed.
               </p>
             </div>
-          ) : isDiagnosing ? (
-            <div className="py-6 text-center space-y-2">
-              <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-gray-600">
-                <span>Checking order details...</span>
-              </div>
-            </div>
           ) : (
-            /* Pure Customer-Facing Card */
+            /* Computed Customer-Facing Card */
             <div className="bg-gradient-to-br from-[#1F1F1F] via-[#2B2B2B] to-[#141414] text-white rounded-2xl p-4 shadow-lg space-y-3 relative overflow-hidden">
               {/* Kicker */}
               <div className="text-[10px] font-bold text-[#F8CB45] uppercase tracking-widest">

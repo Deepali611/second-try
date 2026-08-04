@@ -1,12 +1,18 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BlinkitHeader } from '@/components/BlinkitHeader';
 import { PromoBanners } from '@/components/PromoBanners';
 import { ProductCard, Product } from '@/components/ProductCard';
 import { CategoryGrid } from '@/components/CategoryGrid';
 import { BottomNav } from '@/components/BottomNav';
-import { OrderAgainScreen, OrderScenario } from '@/components/OrderAgainScreen';
+import {
+  OrderAgainScreen,
+  ComputedOrderScenario,
+  SEED_COMPLAINTS,
+  classifyComplaintAlgorithm,
+  computeCardFromDiagnosis,
+} from '@/components/OrderAgainScreen';
 import { ProductDetailSheet, FailureType } from '@/components/ProductDetailSheet';
 import { CategoryListingGrid } from '@/components/CategoryListingGrid';
 import { EvaluatorPanel } from '@/components/EvaluatorPanel';
@@ -114,94 +120,6 @@ const WISHLIST_PRODUCTS: Product[] = [
   },
 ];
 
-const INITIAL_ORDERS: OrderScenario[] = [
-  {
-    orderId: 'o1',
-    categoryKey: 'pet',
-    categoryName: 'Pet Supplies',
-    icon: '🐾',
-    date: 'Tue · first order',
-    failureType: 'quality',
-    signalQuote: 'This arrived already expired, had to throw the whole bag away.',
-    kicker: 'ABOUT YOUR PET SUPPLIES ORDER',
-    title: "That bag shouldn't have reached you like that.",
-    body: "We've flagged this batch and moved your area to freshness-verified sourcing for pet supplies.",
-    productId: 'pet1',
-    productName: 'Everyday Adult Dog Food, 3kg',
-    productIcon: '🐕',
-    productColor: '#FFF9E6',
-    price: 649,
-    reorderNote: 'Verified-fresh batch · packed today',
-    guaranteeTag: 'Freshness-verified · replace-first if this happens again',
-    status: 'issue',
-    buttonText: 'Try Pet Supplies again',
-  },
-  {
-    orderId: 'o2',
-    categoryKey: 'personal',
-    categoryName: 'Personal Care',
-    icon: '🧴',
-    date: 'Mon · first order',
-    failureType: 'proof',
-    signalQuote: "Wasn't sure about this one, no reviews on the app to check before buying.",
-    kicker: 'ABOUT YOUR PERSONAL CARE ORDER',
-    title: "You weren't wrong to want proof first.",
-    body: '1,240 verified buyers near you rated this exact product 4.4★ in the last 30 days.',
-    productId: 'per1',
-    productName: 'Herbal Face Wash, 100ml',
-    productIcon: '🧼',
-    productColor: '#EAF6E2',
-    price: 179,
-    reorderNote: '1,240 verified buyers · 4.4★ near you',
-    guaranteeTag: 'Verified-buyer proof now shown on every listing',
-    status: 'issue',
-    buttonText: 'Try Personal Care again',
-  },
-  {
-    orderId: 'o3',
-    categoryKey: 'baby',
-    categoryName: 'Baby Products',
-    icon: '🍼',
-    date: 'Sun · first order',
-    failureType: 'support',
-    signalQuote: 'Raised a ticket about a torn pack, support closed it without actually fixing anything.',
-    kicker: 'ABOUT YOUR BABY PRODUCTS TICKET',
-    title: "That ticket shouldn't have closed like that.",
-    body: "We reopened it. Aditi from resolutions is your direct contact if it isn't right this time.",
-    productId: 'bab1',
-    productName: 'Baby Diapers, Size M, 42 pcs',
-    productIcon: '🍼',
-    productColor: '#FBE2DE',
-    price: 0,
-    isFree: true,
-    reorderNote: 'Free replacement · ticket #48213 reopened',
-    guaranteeTag: 'Named contact assigned · replacement free',
-    status: 'issue',
-    buttonText: 'Try Baby Products again',
-  },
-  {
-    orderId: 'o4',
-    categoryKey: 'electronics',
-    categoryName: 'Electronics',
-    icon: '🔌',
-    date: 'Thu · first order',
-    failureType: 'highvalue',
-    signalQuote: 'Kept adding it to cart and removing it, too much money to risk if something\'s wrong.',
-    kicker: 'ABOUT YOUR ELECTRONICS ORDER',
-    title: "A big-ticket item shouldn't be a gamble.",
-    body: 'Every electronics order now carries a plain 10-day money-back guarantee, shown before you pay.',
-    productId: 'ele1',
-    productName: 'Compact Air Fryer, 4.1L',
-    productIcon: '🍳',
-    productColor: '#E9E9F7',
-    price: 5499,
-    reorderNote: '10-day money-back guarantee applied',
-    guaranteeTag: '10-day money-back · applied automatically',
-    status: 'issue',
-    buttonText: 'Try Electronics again',
-  },
-];
-
 export default function Home() {
   const [activeHeaderTab, setActiveHeaderTab] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -217,14 +135,113 @@ export default function Home() {
   const [isPdpOpen, setIsPdpOpen] = useState(false);
   const [diagnosedFailure, setDiagnosedFailure] = useState<FailureType>(null);
 
-  // Orders State
-  const [orders, setOrders] = useState<OrderScenario[]>(INITIAL_ORDERS);
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  // Orders State (Initial Loading Skeletons for computed data)
+  const [orders, setOrders] = useState<ComputedOrderScenario[]>(() =>
+    SEED_COMPLAINTS.map((seed) => {
+      const initialComputed = computeCardFromDiagnosis(seed.categoryName, 'quality_expiry');
+      return {
+        ...seed,
+        ...initialComputed,
+        isDiagnosing: true,
+      };
+    })
+  );
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>('o1');
   const [recoveredCount, setRecoveredCount] = useState(0);
 
   // Evaluator Panel Live AI State
   const [customComplaintText, setCustomComplaintText] = useState('');
   const [isDiagnosing, setIsDiagnosing] = useState(false);
+
+  // AUTOMATIC DATA-DERIVED DIAGNOSIS ON MOUNT
+  useEffect(() => {
+    let isMounted = true;
+
+    async function diagnoseAllOrders() {
+      for (const seed of SEED_COMPLAINTS) {
+        try {
+          const res = await fetch('/api/diagnose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ complaintText: seed.complaintText }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (isMounted && data && data.category) {
+              const cardCopy = computeCardFromDiagnosis(seed.categoryName, data.category);
+              setOrders((prev) =>
+                prev.map((o) =>
+                  o.orderId === seed.orderId
+                    ? {
+                        ...o,
+                        ...cardCopy,
+                        failureCategory: data.category,
+                        groundingQuote: data.grounding_quote,
+                        confidence: data.confidence,
+                        reasoning: data.reasoning,
+                        modelUsed: data.modelUsed || 'Groq AI Model',
+                        isDiagnosing: false,
+                      }
+                    : o
+                )
+              );
+            }
+          } else {
+            // API returned non-200 or missing key -> Run fallback dynamic classifier algorithm
+            const fallback = classifyComplaintAlgorithm(seed.complaintText);
+            const cardCopy = computeCardFromDiagnosis(seed.categoryName, fallback.category);
+            if (isMounted) {
+              setOrders((prev) =>
+                prev.map((o) =>
+                  o.orderId === seed.orderId
+                    ? {
+                        ...o,
+                        ...cardCopy,
+                        failureCategory: fallback.category,
+                        groundingQuote: fallback.grounding_quote,
+                        confidence: fallback.confidence,
+                        reasoning: fallback.reasoning,
+                        modelUsed: 'Local Classifier Algorithm',
+                        isDiagnosing: false,
+                      }
+                    : o
+                )
+              );
+            }
+          }
+        } catch (err) {
+          // Network failure -> Run fallback dynamic classifier algorithm
+          const fallback = classifyComplaintAlgorithm(seed.complaintText);
+          const cardCopy = computeCardFromDiagnosis(seed.categoryName, fallback.category);
+          if (isMounted) {
+            setOrders((prev) =>
+              prev.map((o) =>
+                o.orderId === seed.orderId
+                  ? {
+                      ...o,
+                      ...cardCopy,
+                      failureCategory: fallback.category,
+                      groundingQuote: fallback.grounding_quote,
+                      confidence: fallback.confidence,
+                      reasoning: fallback.reasoning,
+                      modelUsed: 'Local Classifier Algorithm',
+                      isDiagnosing: false,
+                    }
+                  : o
+              )
+            );
+          }
+        }
+      }
+    }
+
+    diagnoseAllOrders();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleAdd = (id: string) => {
     setCart((prev) => {
@@ -301,11 +318,18 @@ export default function Home() {
         if (!selectedProduct) setSelectedProduct(PREVIOUSLY_BOUGHT_PRODUCTS[0]);
         setIsPdpOpen(true);
       } else {
-        showToast('Using offline scenario fallback');
+        const fallback = classifyComplaintAlgorithm(customComplaintText.trim());
+        const mappedType: FailureType = fallback.category
+          ? (fallback.category.replace('_expiry', '').replace('_unresolved', '').replace('_hesitation', '') as FailureType)
+          : 'quality';
+        setDiagnosedFailure(mappedType);
+        showToast('Diagnosed via local dynamic classifier');
+        if (!selectedProduct) setSelectedProduct(PREVIOUSLY_BOUGHT_PRODUCTS[0]);
+        setIsPdpOpen(true);
       }
     } catch (err) {
       console.warn('Custom diagnosis call failed:', err);
-      showToast('Using offline scenario fallback');
+      showToast('Diagnosed via local dynamic classifier');
     } finally {
       setIsDiagnosing(false);
     }
@@ -358,7 +382,6 @@ export default function Home() {
               onSelectOrder={setSelectedOrderId}
               onConvertOrder={handleConvertOrder}
               onRetireOrder={handleRetireOrder}
-              isDiagnosing={false}
             />
           ) : selectedCategoryListing ? (
             /* Category Product-Listing Grid View */
@@ -488,6 +511,9 @@ export default function Home() {
           onCustomComplaintChange={setCustomComplaintText}
           onRunCustomDiagnosis={handleRunCustomDiagnosis}
           isDiagnosing={isDiagnosing}
+          orders={orders}
+          selectedOrderId={selectedOrderId}
+          onSelectOrder={setSelectedOrderId}
         />
 
       </div>
