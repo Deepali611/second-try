@@ -6,9 +6,10 @@ import { PromoBanners } from '@/components/PromoBanners';
 import { ProductCard, Product } from '@/components/ProductCard';
 import { CategoryGrid } from '@/components/CategoryGrid';
 import { BottomNav } from '@/components/BottomNav';
-import { OrderAgainScreen } from '@/components/OrderAgainScreen';
+import { OrderAgainScreen, OrderScenario } from '@/components/OrderAgainScreen';
 import { ProductDetailSheet, FailureType } from '@/components/ProductDetailSheet';
 import { CategoryListingGrid } from '@/components/CategoryListingGrid';
+import { EvaluatorPanel } from '@/components/EvaluatorPanel';
 
 const PREVIOUSLY_BOUGHT_PRODUCTS: Product[] = [
   {
@@ -113,6 +114,94 @@ const WISHLIST_PRODUCTS: Product[] = [
   },
 ];
 
+const INITIAL_ORDERS: OrderScenario[] = [
+  {
+    orderId: 'o1',
+    categoryKey: 'pet',
+    categoryName: 'Pet Supplies',
+    icon: '🐾',
+    date: 'Tue · first order',
+    failureType: 'quality',
+    signalQuote: 'This arrived already expired, had to throw the whole bag away.',
+    kicker: 'ABOUT YOUR PET SUPPLIES ORDER',
+    title: "That bag shouldn't have reached you like that.",
+    body: "We've flagged this batch and moved your area to freshness-verified sourcing for pet supplies.",
+    productId: 'pet1',
+    productName: 'Everyday Adult Dog Food, 3kg',
+    productIcon: '🐕',
+    productColor: '#FFF9E6',
+    price: 649,
+    reorderNote: 'Verified-fresh batch · packed today',
+    guaranteeTag: 'Freshness-verified · replace-first if this happens again',
+    status: 'issue',
+    buttonText: 'Try Pet Supplies again',
+  },
+  {
+    orderId: 'o2',
+    categoryKey: 'personal',
+    categoryName: 'Personal Care',
+    icon: '🧴',
+    date: 'Mon · first order',
+    failureType: 'proof',
+    signalQuote: "Wasn't sure about this one, no reviews on the app to check before buying.",
+    kicker: 'ABOUT YOUR PERSONAL CARE ORDER',
+    title: "You weren't wrong to want proof first.",
+    body: '1,240 verified buyers near you rated this exact product 4.4★ in the last 30 days.',
+    productId: 'per1',
+    productName: 'Herbal Face Wash, 100ml',
+    productIcon: '🧼',
+    productColor: '#EAF6E2',
+    price: 179,
+    reorderNote: '1,240 verified buyers · 4.4★ near you',
+    guaranteeTag: 'Verified-buyer proof now shown on every listing',
+    status: 'issue',
+    buttonText: 'Try Personal Care again',
+  },
+  {
+    orderId: 'o3',
+    categoryKey: 'baby',
+    categoryName: 'Baby Products',
+    icon: '🍼',
+    date: 'Sun · first order',
+    failureType: 'support',
+    signalQuote: 'Raised a ticket about a torn pack, support closed it without actually fixing anything.',
+    kicker: 'ABOUT YOUR BABY PRODUCTS TICKET',
+    title: "That ticket shouldn't have closed like that.",
+    body: "We reopened it. Aditi from resolutions is your direct contact if it isn't right this time.",
+    productId: 'bab1',
+    productName: 'Baby Diapers, Size M, 42 pcs',
+    productIcon: '🍼',
+    productColor: '#FBE2DE',
+    price: 0,
+    isFree: true,
+    reorderNote: 'Free replacement · ticket #48213 reopened',
+    guaranteeTag: 'Named contact assigned · replacement free',
+    status: 'issue',
+    buttonText: 'Try Baby Products again',
+  },
+  {
+    orderId: 'o4',
+    categoryKey: 'electronics',
+    categoryName: 'Electronics',
+    icon: '🔌',
+    date: 'Thu · first order',
+    failureType: 'highvalue',
+    signalQuote: 'Kept adding it to cart and removing it, too much money to risk if something\'s wrong.',
+    kicker: 'ABOUT YOUR ELECTRONICS ORDER',
+    title: "A big-ticket item shouldn't be a gamble.",
+    body: 'Every electronics order now carries a plain 10-day money-back guarantee, shown before you pay.',
+    productId: 'ele1',
+    productName: 'Compact Air Fryer, 4.1L',
+    productIcon: '🍳',
+    productColor: '#E9E9F7',
+    price: 5499,
+    reorderNote: '10-day money-back guarantee applied',
+    guaranteeTag: '10-day money-back · applied automatically',
+    status: 'issue',
+    buttonText: 'Try Electronics again',
+  },
+];
+
 export default function Home() {
   const [activeHeaderTab, setActiveHeaderTab] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -127,6 +216,15 @@ export default function Home() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isPdpOpen, setIsPdpOpen] = useState(false);
   const [diagnosedFailure, setDiagnosedFailure] = useState<FailureType>(null);
+
+  // Orders State
+  const [orders, setOrders] = useState<OrderScenario[]>(INITIAL_ORDERS);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [recoveredCount, setRecoveredCount] = useState(0);
+
+  // Evaluator Panel Live AI State
+  const [customComplaintText, setCustomComplaintText] = useState('');
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
 
   const handleAdd = (id: string) => {
     setCart((prev) => {
@@ -163,6 +261,56 @@ export default function Home() {
     }
   };
 
+  const handleConvertOrder = (orderId: string) => {
+    const order = orders.find((o) => o.orderId === orderId);
+    if (!order || order.status !== 'issue') return;
+
+    setOrders((prev) =>
+      prev.map((o) => (o.orderId === orderId ? { ...o, status: 'resolved' } : o))
+    );
+    setRecoveredCount((prev) => prev + 1);
+    showToast(`✓ Second order placed — welcome back to ${order.categoryName}!`);
+  };
+
+  const handleRetireOrder = (orderId: string) => {
+    setOrders((prev) =>
+      prev.map((o) => (o.orderId === orderId ? { ...o, status: 'closed' } : o))
+    );
+    showToast('Order summary closed');
+  };
+
+  const handleRunCustomDiagnosis = async () => {
+    if (!customComplaintText.trim()) return;
+
+    setIsDiagnosing(true);
+    try {
+      const res = await fetch('/api/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ complaintText: customComplaintText.trim() }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const mappedType: FailureType = data.category
+          ? (data.category.replace('_expiry', '').replace('_unresolved', '').replace('_hesitation', '') as FailureType)
+          : 'quality';
+
+        setDiagnosedFailure(mappedType);
+        showToast(`Diagnosed as ${data.category} via Live Groq AI Model ✓`);
+        if (!selectedProduct) setSelectedProduct(PREVIOUSLY_BOUGHT_PRODUCTS[0]);
+        setIsPdpOpen(true);
+      } else {
+        showToast('Using offline scenario fallback');
+      }
+    } catch (err) {
+      console.warn('Custom diagnosis call failed:', err);
+      showToast('Using offline scenario fallback');
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -186,191 +334,162 @@ export default function Home() {
   }, 0);
 
   return (
-    <div className="min-h-screen bg-[#FFFBF2] text-[#1F1F1F] font-sans antialiased pb-24 selection:bg-[#F8CB45] selection:text-black">
-      {/* Mobile App Viewport Container */}
-      <div className="max-w-md mx-auto bg-white min-h-screen shadow-2xl relative border-x border-gray-200">
+    <div className="min-h-screen bg-[#FFFBF2] text-[#1F1F1F] font-sans antialiased py-6 px-4 selection:bg-[#F8CB45] selection:text-black">
+      {/* Desktop Responsive Layout: Phone Frame Left + Evaluator Panel Right */}
+      <div className="max-w-5xl mx-auto flex flex-col lg:flex-row items-start justify-center gap-8">
         
-        {/* App Top Bar Header */}
-        <BlinkitHeader
-          activeTab={activeHeaderTab}
-          onTabChange={handleHeaderTabChange}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-        />
-
-        {/* Dynamic PDP Policy Row Tester bar */}
-        <div className="bg-[#1F1F1F] text-white px-3 py-2 text-xs flex items-center justify-between border-b border-gray-800 overflow-x-auto no-scrollbar">
-          <span className="font-extrabold text-[#F8CB45] text-[10px] uppercase tracking-wider shrink-0 mr-2">
-            PDP Policy Simulator:
-          </span>
-          <div className="flex items-center gap-1 shrink-0">
-            {(
-              [
-                { id: null, label: 'Default Blinkit' },
-                { id: 'quality', label: 'Quality' },
-                { id: 'proof', label: 'Proof' },
-                { id: 'support', label: 'Support' },
-                { id: 'highvalue', label: 'High-Value' },
-              ] as const
-            ).map((item) => {
-              const isActive = diagnosedFailure === item.id;
-              return (
-                <button
-                  key={String(item.id)}
-                  onClick={() => {
-                    setDiagnosedFailure(item.id);
-                    if (!selectedProduct) setSelectedProduct(PREVIOUSLY_BOUGHT_PRODUCTS[0]);
-                    setIsPdpOpen(true);
-                  }}
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors ${
-                    isActive
-                      ? 'bg-[#54B226] text-white'
-                      : 'bg-white/10 text-white/80 hover:bg-white/20'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* View Switcher: Order Again vs Category Product Listing vs Main Home View */}
-        {activeNavTab === 'order-again' ? (
-          <OrderAgainScreen onShowToast={showToast} />
-        ) : selectedCategoryListing ? (
-          /* Category Product-Listing Grid View (Bug 1 Fix) */
-          <CategoryListingGrid
-            categoryName={selectedCategoryListing}
-            onBackToHome={() => {
-              setSelectedCategoryListing(null);
-              setActiveHeaderTab('All');
-            }}
-            onSelectProduct={(product) => handleOpenPdp(product, diagnosedFailure)}
-            cart={cart}
-            onAdd={handleAdd}
-            onRemove={handleRemove}
+        {/* Customer-Facing Mobile App Phone Frame */}
+        <div className="w-full max-w-md bg-white min-h-screen shadow-2xl relative border-x border-gray-200 rounded-[36px] overflow-hidden shrink-0 mx-auto lg:mx-0">
+          
+          {/* App Top Bar Header */}
+          <BlinkitHeader
+            activeTab={activeHeaderTab}
+            onTabChange={handleHeaderTabChange}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
           />
-        ) : (
-          /* Main Home View */
-          <main className="pb-8">
-            {/* Quick Banner Callout for Order Again / Second Try Feature */}
-            <div className="mx-4 mt-3 bg-gradient-to-r from-[#1F1F1F] to-[#2E2E2E] text-white p-3 rounded-2xl flex items-center justify-between shadow-md">
-              <div className="flex items-center gap-2.5">
-                <span className="text-2xl">🔄</span>
-                <div>
-                  <div className="text-xs font-black text-[#F8CB45] uppercase tracking-wide">
-                    Second Try AI Recovery
-                  </div>
-                  <div className="text-[11px] text-white/80 font-medium">
-                    Review past order diagnoses & personalized guarantees
-                  </div>
+
+          {/* View Switcher: Order Again vs Category Product Listing vs Main Home View */}
+          {activeNavTab === 'order-again' ? (
+            <OrderAgainScreen
+              onShowToast={showToast}
+              orders={orders}
+              selectedOrderId={selectedOrderId}
+              onSelectOrder={setSelectedOrderId}
+              onConvertOrder={handleConvertOrder}
+              onRetireOrder={handleRetireOrder}
+              isDiagnosing={false}
+            />
+          ) : selectedCategoryListing ? (
+            /* Category Product-Listing Grid View */
+            <CategoryListingGrid
+              categoryName={selectedCategoryListing}
+              onBackToHome={() => {
+                setSelectedCategoryListing(null);
+                setActiveHeaderTab('All');
+              }}
+              onSelectProduct={(product) => handleOpenPdp(product, diagnosedFailure)}
+              cart={cart}
+              onAdd={handleAdd}
+              onRemove={handleRemove}
+            />
+          ) : (
+            /* Main Home View */
+            <main className="pb-8">
+              {/* Hero Promotional Banners */}
+              <PromoBanners />
+
+              {/* Section: Previously Bought Products Horizontal Carousel */}
+              <div className="my-5 px-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-base font-extrabold text-[#1F1F1F]">
+                    Previously bought
+                  </h3>
+                  <button
+                    onClick={() => setActiveNavTab('order-again')}
+                    className="text-xs font-extrabold text-[#54B226] hover:underline"
+                  >
+                    See all (4 orders) ▸
+                  </button>
+                </div>
+
+                <div className="flex items-stretch gap-3 overflow-x-auto no-scrollbar pb-2 pt-1 -mx-4 px-4">
+                  {PREVIOUSLY_BOUGHT_PRODUCTS.map((product) => (
+                    <div key={product.id} onClick={() => handleOpenPdp(product, diagnosedFailure)}>
+                      <ProductCard
+                        product={product}
+                        quantity={cart[product.id] || 0}
+                        onAdd={handleAdd}
+                        onRemove={handleRemove}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
-              <button
-                onClick={() => setActiveNavTab('order-again')}
-                className="bg-[#54B226] hover:bg-[#3E8A1C] text-white font-extrabold text-xs px-3 py-1.5 rounded-xl shadow-xs transition-transform active:scale-95 whitespace-nowrap"
-              >
-                View Orders ▸
-              </button>
+
+              {/* Section: Your Wishlist */}
+              <div className="my-5 px-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-base font-extrabold text-[#1F1F1F]">
+                    Your wishlist
+                  </h3>
+                  <button className="text-xs font-extrabold text-[#54B226] hover:underline">
+                    View all (3) ▸
+                  </button>
+                </div>
+
+                <div className="flex items-stretch gap-3 overflow-x-auto no-scrollbar pb-2 pt-1 -mx-4 px-4">
+                  {WISHLIST_PRODUCTS.map((product) => (
+                    <div key={product.id} onClick={() => handleOpenPdp(product, diagnosedFailure)}>
+                      <ProductCard
+                        product={product}
+                        quantity={cart[product.id] || 0}
+                        onAdd={handleAdd}
+                        onRemove={handleRemove}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 4-Column Category Grid Sections */}
+              <CategoryGrid
+                onCategoryClick={(cat) => {
+                  setSelectedCategoryListing(cat);
+                }}
+              />
+            </main>
+          )}
+
+          {/* Product Detail Sheet Modal */}
+          <ProductDetailSheet
+            product={selectedProduct}
+            isOpen={isPdpOpen}
+            onClose={() => setIsPdpOpen(false)}
+            diagnosedFailure={diagnosedFailure}
+            onAddToCart={handleAdd}
+            cartQuantity={selectedProduct ? cart[selectedProduct.id] || 0 : 0}
+          />
+
+          {/* Toast Notification */}
+          {toastMessage && (
+            <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-[#1F1F1F] text-[#F8CB45] text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-fade-in border border-[#F8CB45]/20">
+              <span className="w-2 h-2 rounded-full bg-[#54B226]" />
+              {toastMessage}
             </div>
+          )}
 
-            {/* Hero Promotional Banners */}
-            <PromoBanners />
+          {/* Floating Bottom Navigation */}
+          <BottomNav
+            activeTab={activeNavTab}
+            onNavChange={(tab) => {
+              setActiveNavTab(tab);
+              if (tab === 'home') {
+                setSelectedCategoryListing(null);
+              }
+            }}
+            cartCount={totalCartCount}
+            cartTotal={totalCartPrice}
+            onOpenCart={() => showToast(`Opening cart: ${totalCartCount} items (₹${totalCartPrice})`)}
+          />
+        </div>
 
-            {/* Section: Previously Bought Products Horizontal Carousel */}
-            <div className="my-5 px-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-base font-extrabold text-[#1F1F1F]">
-                  Previously bought
-                </h3>
-                <button
-                  onClick={() => setActiveNavTab('order-again')}
-                  className="text-xs font-extrabold text-[#54B226] hover:underline"
-                >
-                  See all (4 orders) ▸
-                </button>
-              </div>
-
-              <div className="flex items-stretch gap-3 overflow-x-auto no-scrollbar pb-2 pt-1 -mx-4 px-4">
-                {PREVIOUSLY_BOUGHT_PRODUCTS.map((product) => (
-                  <div key={product.id} onClick={() => handleOpenPdp(product, diagnosedFailure)}>
-                    <ProductCard
-                      product={product}
-                      quantity={cart[product.id] || 0}
-                      onAdd={handleAdd}
-                      onRemove={handleRemove}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Section: Your Wishlist */}
-            <div className="my-5 px-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-base font-extrabold text-[#1F1F1F]">
-                  Your wishlist
-                </h3>
-                <button className="text-xs font-extrabold text-[#54B226] hover:underline">
-                  View all (3) ▸
-                </button>
-              </div>
-
-              <div className="flex items-stretch gap-3 overflow-x-auto no-scrollbar pb-2 pt-1 -mx-4 px-4">
-                {WISHLIST_PRODUCTS.map((product) => (
-                  <div key={product.id} onClick={() => handleOpenPdp(product, diagnosedFailure)}>
-                    <ProductCard
-                      product={product}
-                      quantity={cart[product.id] || 0}
-                      onAdd={handleAdd}
-                      onRemove={handleRemove}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 4-Column Category Grid Sections */}
-            <CategoryGrid
-              onCategoryClick={(cat) => {
-                setSelectedCategoryListing(cat);
-              }}
-            />
-          </main>
-        )}
-
-        {/* Product Detail Sheet Modal */}
-        <ProductDetailSheet
-          product={selectedProduct}
-          isOpen={isPdpOpen}
-          onClose={() => setIsPdpOpen(false)}
+        {/* Separated Evaluator & Grading Panel (Outside Phone Frame) */}
+        <EvaluatorPanel
           diagnosedFailure={diagnosedFailure}
-          onAddToCart={handleAdd}
-          cartQuantity={selectedProduct ? cart[selectedProduct.id] || 0 : 0}
-        />
-
-        {/* Toast Notification */}
-        {toastMessage && (
-          <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-[#1F1F1F] text-[#F8CB45] text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-fade-in border border-[#F8CB45]/20">
-            <span className="w-2 h-2 rounded-full bg-[#54B226]" />
-            {toastMessage}
-          </div>
-        )}
-
-        {/* Floating Bottom Navigation */}
-        <BottomNav
-          activeTab={activeNavTab}
-          onNavChange={(tab) => {
-            setActiveNavTab(tab);
-            if (tab === 'home') {
-              setSelectedCategoryListing(null);
-            }
+          onSelectPolicyFailure={(failure) => {
+            setDiagnosedFailure(failure);
+            if (!selectedProduct) setSelectedProduct(PREVIOUSLY_BOUGHT_PRODUCTS[0]);
+            setIsPdpOpen(true);
           }}
-          cartCount={totalCartCount}
-          cartTotal={totalCartPrice}
-          onOpenCart={() => showToast(`Opening cart: ${totalCartCount} items (₹${totalCartPrice})`)}
+          recoveredCount={recoveredCount}
+          totalOrdersCount={orders.length}
+          customComplaintText={customComplaintText}
+          onCustomComplaintChange={setCustomComplaintText}
+          onRunCustomDiagnosis={handleRunCustomDiagnosis}
+          isDiagnosing={isDiagnosing}
         />
+
       </div>
     </div>
   );
