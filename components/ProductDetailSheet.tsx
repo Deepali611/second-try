@@ -108,7 +108,7 @@ export const ProductDetailSheet: React.FC<ProductDetailSheetProps> = ({
       <div className="absolute inset-0" onClick={onClose} />
 
       {/* Swipeable Bottom Sheet Container */}
-      <div className="relative bg-white w-full max-w-md mx-auto rounded-t-3xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl z-10 border-t border-gray-200 animate-slide-up">
+      <div className="relative bg-white w-full max-w-md mx-auto rounded-t-3xl h-[88vh] max-h-[90vh] flex flex-col overflow-hidden shadow-2xl z-50 border-t border-gray-200 animate-slide-up">
         
         {/* Navigation Bar Top Row */}
         <div className="bg-white p-3.5 flex items-center justify-between border-b border-gray-100 shrink-0 z-10">
@@ -141,14 +141,14 @@ export const ProductDetailSheet: React.FC<ProductDetailSheetProps> = ({
             </button>
             <button className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-700">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
               </svg>
             </button>
           </div>
         </div>
 
         {/* Scrollable Body Content */}
-        <div className="overflow-y-auto p-4 space-y-4 flex-1">
+        <div className="overflow-y-auto min-h-0 flex-1 p-4 space-y-4 pb-6 overscroll-contain">
           {/* Centered Product Photo Carousel */}
           <div className="bg-white rounded-2xl p-6 text-center border border-gray-100 relative flex flex-col items-center justify-center min-h-[220px]">
             <span className="text-8xl filter drop-shadow-md select-none">

@@ -8,6 +8,7 @@ import { CategoryGrid } from '@/components/CategoryGrid';
 import { BottomNav } from '@/components/BottomNav';
 import { OrderAgainScreen } from '@/components/OrderAgainScreen';
 import { ProductDetailSheet, FailureType } from '@/components/ProductDetailSheet';
+import { CategoryListingGrid } from '@/components/CategoryListingGrid';
 
 const PREVIOUSLY_BOUGHT_PRODUCTS: Product[] = [
   {
@@ -119,6 +120,9 @@ export default function Home() {
   const [cart, setCart] = useState<Record<string, number>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Category Listing Grid View State
+  const [selectedCategoryListing, setSelectedCategoryListing] = useState<string | null>(null);
+
   // PDP Sheet State
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isPdpOpen, setIsPdpOpen] = useState(false);
@@ -148,6 +152,15 @@ export default function Home() {
     setSelectedProduct(product);
     setDiagnosedFailure(failure);
     setIsPdpOpen(true);
+  };
+
+  const handleHeaderTabChange = (tabId: string) => {
+    setActiveHeaderTab(tabId);
+    if (tabId === 'All') {
+      setSelectedCategoryListing(null);
+    } else {
+      setSelectedCategoryListing(tabId);
+    }
   };
 
   const showToast = (msg: string) => {
@@ -180,7 +193,7 @@ export default function Home() {
         {/* App Top Bar Header */}
         <BlinkitHeader
           activeTab={activeHeaderTab}
-          onTabChange={setActiveHeaderTab}
+          onTabChange={handleHeaderTabChange}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
         />
@@ -222,9 +235,22 @@ export default function Home() {
           </div>
         </div>
 
-        {/* View Switcher based on Bottom Nav */}
+        {/* View Switcher: Order Again vs Category Product Listing vs Main Home View */}
         {activeNavTab === 'order-again' ? (
           <OrderAgainScreen onShowToast={showToast} />
+        ) : selectedCategoryListing ? (
+          /* Category Product-Listing Grid View (Bug 1 Fix) */
+          <CategoryListingGrid
+            categoryName={selectedCategoryListing}
+            onBackToHome={() => {
+              setSelectedCategoryListing(null);
+              setActiveHeaderTab('All');
+            }}
+            onSelectProduct={(product) => handleOpenPdp(product, diagnosedFailure)}
+            cart={cart}
+            onAdd={handleAdd}
+            onRemove={handleRemove}
+          />
         ) : (
           /* Main Home View */
           <main className="pb-8">
@@ -308,8 +334,7 @@ export default function Home() {
             {/* 4-Column Category Grid Sections */}
             <CategoryGrid
               onCategoryClick={(cat) => {
-                showToast(`Selected category: ${cat}`);
-                handleOpenPdp(PREVIOUSLY_BOUGHT_PRODUCTS[0], diagnosedFailure);
+                setSelectedCategoryListing(cat);
               }}
             />
           </main>
@@ -327,7 +352,7 @@ export default function Home() {
 
         {/* Toast Notification */}
         {toastMessage && (
-          <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-[#1F1F1F] text-white text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-fade-in border border-white/10">
+          <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-[#1F1F1F] text-[#F8CB45] text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-fade-in border border-[#F8CB45]/20">
             <span className="w-2 h-2 rounded-full bg-[#54B226]" />
             {toastMessage}
           </div>
@@ -336,7 +361,12 @@ export default function Home() {
         {/* Floating Bottom Navigation */}
         <BottomNav
           activeTab={activeNavTab}
-          onNavChange={setActiveNavTab}
+          onNavChange={(tab) => {
+            setActiveNavTab(tab);
+            if (tab === 'home') {
+              setSelectedCategoryListing(null);
+            }
+          }}
           cartCount={totalCartCount}
           cartTotal={totalCartPrice}
           onOpenCart={() => showToast(`Opening cart: ${totalCartCount} items (₹${totalCartPrice})`)}
